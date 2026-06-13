@@ -104,9 +104,15 @@ export interface LightingConfig {
   mode: LightingMode;
   brightness: number;
   knobColors: string[];
+  knobBrightness: number[];
+  knobEnabled: boolean[];
   sliders: SliderLighting[];
+  sliderBrightness: number[];
+  sliderEnabled: boolean[];
   sliderLabelColors: string[];
   logoColor: string;
+  logoBrightness: number;
+  logoEnabled: boolean;
   animationHue: number;
   animationSpeed: number;
 }

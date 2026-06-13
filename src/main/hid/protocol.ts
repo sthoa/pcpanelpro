@@ -227,8 +227,13 @@ function writeColor(packet: Buffer, offset: number, hex: string, brightness: num
   packet[offset + 2] = scaled(b, brightness);
 }
 
+// The hardware has no per-LED brightness register — "brightness" is just RGB
+// scaling. So per-control brightness is applied by scaling that control's
+// color. Callers pass an effective brightness per control (already combining
+// the global brightness with the per-control value).
+
 /** Static color per knob ring; null leaves a knob dark */
-export function createKnobLightingPacket(brightness: number, colors: (string | null)[]): Buffer {
+export function createKnobLightingPacket(brightnesses: number[], colors: (string | null)[]): Buffer {
   const packet = Buffer.alloc(PACKET_SIZE);
   packet[0] = LIGHT_PREFIX_PRO;
   packet[1] = LIGHT_TARGET_KNOB;
@@ -236,14 +241,14 @@ export function createKnobLightingPacket(brightness: number, colors: (string | n
     if (!color) return;
     const offset = 2 + i * 7;
     packet[offset] = 0x01;  // static
-    writeColor(packet, offset + 1, color, brightness);
+    writeColor(packet, offset + 1, color, brightnesses[i] ?? 100);
   });
   return packet;
 }
 
 /** Slider LED tracks: a gradient from bottom to top color (same color = solid) */
 export function createSliderLightingPacket(
-  brightness: number,
+  brightnesses: number[],
   sliders: ({ color1: string; color2: string; volumeGradient: boolean } | null)[]
 ): Buffer {
   const packet = Buffer.alloc(PACKET_SIZE);
@@ -252,15 +257,16 @@ export function createSliderLightingPacket(
   sliders.forEach((slider, i) => {
     if (!slider) return;
     const offset = 2 + i * 7;
+    const b = brightnesses[i] ?? 100;
     packet[offset] = slider.volumeGradient ? 0x03 : 0x01;
-    writeColor(packet, offset + 1, slider.color1, brightness);
-    writeColor(packet, offset + 4, slider.color2, brightness);
+    writeColor(packet, offset + 1, slider.color1, b);
+    writeColor(packet, offset + 4, slider.color2, b);
   });
   return packet;
 }
 
 /** Static color per slider label */
-export function createSliderLabelLightingPacket(brightness: number, colors: (string | null)[]): Buffer {
+export function createSliderLabelLightingPacket(brightnesses: number[], colors: (string | null)[]): Buffer {
   const packet = Buffer.alloc(PACKET_SIZE);
   packet[0] = LIGHT_PREFIX_PRO;
   packet[1] = LIGHT_TARGET_SLIDER_LABEL;
@@ -268,7 +274,7 @@ export function createSliderLabelLightingPacket(brightness: number, colors: (str
     if (!color) return;
     const offset = 2 + i * 7;
     packet[offset] = 0x01;  // static
-    writeColor(packet, offset + 1, color, brightness);
+    writeColor(packet, offset + 1, color, brightnesses[i] ?? 100);
   });
   return packet;
 }
