@@ -1223,6 +1223,28 @@ Napi::Value GetDefaultOutputDevice(const Napi::CallbackInfo& info) {
     return result;
 }
 
+// Set the system default output device
+Napi::Value SetDefaultOutputDevice(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+
+    if (info.Length() < 1 || !info[0].IsNumber()) {
+        Napi::TypeError::New(env, "Device ID required").ThrowAsJavaScriptException();
+        return env.Null();
+    }
+
+    AudioDeviceID deviceID = static_cast<AudioDeviceID>(info[0].As<Napi::Number>().Uint32Value());
+
+    AudioObjectPropertyAddress propAddr = {
+        kAudioHardwarePropertyDefaultOutputDevice,
+        kAudioObjectPropertyScopeGlobal,
+        kAudioObjectPropertyElementMain
+    };
+
+    OSStatus status = AudioObjectSetPropertyData(kAudioObjectSystemObject, &propAddr, 0, nullptr,
+                                                 sizeof(deviceID), &deviceID);
+    return Napi::Boolean::New(env, status == noErr);
+}
+
 // Get whether a device is currently running (has active audio)
 Napi::Value GetDeviceIsRunning(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
@@ -1479,6 +1501,9 @@ Napi::Value StopAllMixers(const Napi::CallbackInfo& info) {
 // Module Init
 // ============================================================================
 
+// Defined in process_tap.mm
+Napi::Object InitProcessTap(Napi::Env env, Napi::Object exports);
+
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
     // Passthrough functions
     exports.Set("listAudioDevices", Napi::Function::New(env, ListAudioDevices));
@@ -1487,6 +1512,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
     exports.Set("stopAllPassthrough", Napi::Function::New(env, StopAllPassthrough));
     exports.Set("setPassthroughVolume", Napi::Function::New(env, SetPassthroughVolume));
     exports.Set("getDefaultOutputDevice", Napi::Function::New(env, GetDefaultOutputDevice));
+    exports.Set("setDefaultOutputDevice", Napi::Function::New(env, SetDefaultOutputDevice));
     exports.Set("getDeviceIsRunning", Napi::Function::New(env, GetDeviceIsRunning));
     exports.Set("getDeviceActivity", Napi::Function::New(env, GetDeviceActivity));
 
@@ -1501,6 +1527,9 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
     exports.Set("mixerGetLevels", Napi::Function::New(env, MixerGetLevels));
     exports.Set("destroyMixer", Napi::Function::New(env, DestroyMixer));
     exports.Set("stopAllMixers", Napi::Function::New(env, StopAllMixers));
+
+    // Per-app process tap functions (macOS 14.4+)
+    InitProcessTap(env, exports);
 
     return exports;
 }

@@ -21,36 +21,49 @@ export interface AudioOutputDevice {
   isDefault: boolean;
 }
 
+export type ChannelAssignment =
+  | { type: 'apps'; bundleIDs: string[] }
+  | { type: 'other-apps' }
+  | { type: 'none' };
+
 export interface ChannelState {
   id: string;
-  deviceName: string;
   channelName: string;
   hardwareIndex: number;
   volume: number;
   muted: boolean;
+  assignment: ChannelAssignment;
   isActive: boolean;
   apps: string[];
-}
-
-export interface MixBusChannel {
-  channelId: string;
-  enabled: boolean;
-  gainOverride: number | null;
-}
-
-export interface MixBusState {
-  id: string;
-  name: string;
-  outputDeviceId: number | null;
-  channels: MixBusChannel[];
   isRunning: boolean;
-  mixerHandle: number | null;
 }
+
+export interface RunningApp {
+  bundleID: string;
+  name: string;
+  pids: number[];
+  isAudible: boolean;
+  icon: string | null;
+  isRegularApp: boolean;
+  volume: number;
+  muted: boolean;
+  isAssigned: boolean;
+}
+
+export type ButtonAction =
+  | { type: 'none' }
+  | { type: 'mute-channel' }
+  | { type: 'switch-output'; deviceName: string }
+  | { type: 'media-play-pause' }
+  | { type: 'media-next' }
+  | { type: 'media-previous' };
 
 export interface AudioRoutingState {
   channels: ChannelState[];
-  mixBuses: MixBusState[];
+  runningApps: RunningApp[];
   availableOutputs: AudioOutputDevice[];
+  outputDeviceId: number | null;
+  buttonActions: ButtonAction[];
 }
 
 export interface KnobChangeEvent {
@@ -79,6 +92,25 @@ export interface ToastData {
   duration?: number;
 }
 
+export type LightingMode = 'custom' | 'rainbow' | 'wave' | 'breath' | 'off';
+
+export interface SliderLighting {
+  color1: string;
+  color2: string;
+  volumeGradient: boolean;
+}
+
+export interface LightingConfig {
+  mode: LightingMode;
+  brightness: number;
+  knobColors: string[];
+  sliders: SliderLighting[];
+  sliderLabelColors: string[];
+  logoColor: string;
+  animationHue: number;
+  animationSpeed: number;
+}
+
 export interface PCPanelAPI {
   // Event listeners
   onDeviceStatus: (callback: (status: { connected: boolean; message: string }) => void) => void;
@@ -89,7 +121,7 @@ export interface PCPanelAPI {
   onAudioLevels: (callback: (levels: Record<string, AudioLevelInfo>) => void) => void;
   onToast: (callback: (toast: ToastData) => void) => void;
 
-  // Legacy API
+  // Device API
   getDeviceState: () => Promise<DeviceState>;
   getOutputDevice: () => Promise<{ name: string } | null>;
   getChannelActivity: () => Promise<Record<number, ChannelActivityInfo>>;
@@ -100,7 +132,15 @@ export interface PCPanelAPI {
   setChannelLabel: (channelId: string, label: string) => Promise<AudioRoutingState>;
   setChannelVolume: (channelId: string, volume: number) => Promise<boolean>;
   setChannelMuted: (channelId: string, muted: boolean) => Promise<boolean>;
-  setChannelEnabled: (mixId: string, channelId: string, enabled: boolean) => Promise<boolean>;
-  setMixOutput: (mixId: string, deviceId: number | null) => Promise<boolean>;
+  setChannelAssignment: (channelId: string, assignment: ChannelAssignment) => Promise<AudioRoutingState>;
+  setOutputDevice: (deviceId: number | null) => Promise<boolean>;
+  getRunningApps: () => Promise<RunningApp[]>;
   getAvailableOutputs: () => Promise<AudioOutputDevice[]>;
+  setAppVolume: (bundleID: string, volume: number) => Promise<boolean>;
+  setAppMuted: (bundleID: string, muted: boolean) => Promise<boolean>;
+  reportContentHeight: (height: number) => void;
+  setButtonAction: (buttonIndex: number, action: ButtonAction) => Promise<AudioRoutingState>;
+  getLighting: () => Promise<LightingConfig>;
+  setLighting: (config: Partial<LightingConfig>) => Promise<LightingConfig>;
+  quitApp: () => Promise<void>;
 }

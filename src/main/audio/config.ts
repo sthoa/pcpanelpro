@@ -3,7 +3,13 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { app } from 'electron';
-import { AudioRoutingConfig, createDefaultConfig } from './types';
+import {
+  AppVolume,
+  AudioRoutingConfig,
+  ButtonAction,
+  ChannelAssignment,
+  createDefaultConfig,
+} from './types';
 
 const CONFIG_FILENAME = 'audio-routing.json';
 
@@ -25,7 +31,7 @@ export function loadConfig(): AudioRoutingConfig {
   try {
     if (fs.existsSync(configPath)) {
       const data = fs.readFileSync(configPath, 'utf-8');
-      const parsed = JSON.parse(data) as AudioRoutingConfig;
+      const parsed = JSON.parse(data);
 
       // Validate and merge with defaults to ensure all required fields exist
       return mergeWithDefaults(parsed);
@@ -58,50 +64,100 @@ export function saveConfig(config: AudioRoutingConfig): boolean {
   }
 }
 
+function isValidAssignment(value: unknown): value is ChannelAssignment {
+  if (!value || typeof value !== 'object') return false;
+  const a = value as { type?: unknown; bundleIDs?: unknown };
+  if (a.type === 'none' || a.type === 'other-apps') return true;
+  return a.type === 'apps' && Array.isArray(a.bundleIDs) &&
+    a.bundleIDs.every(b => typeof b === 'string');
+}
+
 /**
- * Merge loaded config with defaults to handle schema changes
- * Ensures new fields are added while preserving user settings
+ * Merge loaded config with defaults to handle schema changes.
+ * Also migrates configs from the old virtual-device format (which had
+ * deviceName/mixBuses/hardwareMapping fields): user labels, volumes, and
+ * mute states are preserved; device assignments are reset to 'none'.
  */
-function mergeWithDefaults(loaded: Partial<AudioRoutingConfig>): AudioRoutingConfig {
+function mergeWithDefaults(loaded: Record<string, unknown>): AudioRoutingConfig {
   const defaults = createDefaultConfig();
 
-  // Merge input channels - preserve user display names and volumes
+  const loadedChannels = Array.isArray(loaded.inputChannels)
+    ? (loaded.inputChannels as Record<string, unknown>[])
+    : [];
+
   const inputChannels = defaults.inputChannels.map(defaultChannel => {
-    const loadedChannel = loaded.inputChannels?.find(c => c.id === defaultChannel.id);
-    if (loadedChannel) {
-      return {
-        ...defaultChannel,
-        channelName: loadedChannel.channelName ?? defaultChannel.channelName,
-        volume: loadedChannel.volume ?? defaultChannel.volume,
-        muted: loadedChannel.muted ?? defaultChannel.muted,
-      };
-    }
-    return defaultChannel;
+    const loadedChannel = loadedChannels.find(c => c.id === defaultChannel.id);
+    if (!loadedChannel) return defaultChannel;
+    return {
+      ...defaultChannel,
+      channelName: typeof loadedChannel.channelName === 'string'
+        ? loadedChannel.channelName : defaultChannel.channelName,
+      volume: typeof loadedChannel.volume === 'number'
+        ? Math.max(0, Math.min(1, loadedChannel.volume)) : defaultChannel.volume,
+      muted: typeof loadedChannel.muted === 'boolean'
+        ? loadedChannel.muted : defaultChannel.muted,
+      assignment: isValidAssignment(loadedChannel.assignment)
+        ? loadedChannel.assignment : defaultChannel.assignment,
+    };
   });
 
-  // Merge mix buses - preserve user settings
-  const mixBuses = defaults.mixBuses.map(defaultBus => {
-    const loadedBus = loaded.mixBuses?.find(b => b.id === defaultBus.id);
-    if (loadedBus) {
-      return {
-        ...defaultBus,
-        name: loadedBus.name ?? defaultBus.name,
-        outputDeviceId: loadedBus.outputDeviceId ?? defaultBus.outputDeviceId,
-        channels: loadedBus.channels ?? defaultBus.channels,
-      };
+  // Prefer the new top-level field; fall back to the legacy personal mix output
+  let outputDeviceId: number | null = null;
+  if (typeof loaded.outputDeviceId === 'number') {
+    outputDeviceId = loaded.outputDeviceId;
+  } else if (Array.isArray(loaded.mixBuses)) {
+    const personal = (loaded.mixBuses as Record<string, unknown>[]).find(b => b.id === 'personal');
+    if (personal && typeof personal.outputDeviceId === 'number') {
+      outputDeviceId = personal.outputDeviceId;
     }
-    return defaultBus;
-  });
+  }
 
-  // Use loaded hardware mapping if valid, otherwise use defaults
-  const hardwareMapping = loaded.hardwareMapping && Object.keys(loaded.hardwareMapping).length > 0
-    ? loaded.hardwareMapping
-    : defaults.hardwareMapping;
+  const appVolumes: Record<string, AppVolume> = {};
+  if (loaded.appVolumes && typeof loaded.appVolumes === 'object') {
+    for (const [bundleID, value] of Object.entries(loaded.appVolumes as Record<string, unknown>)) {
+      const v = value as { volume?: unknown; muted?: unknown };
+      if (typeof v?.volume === 'number') {
+        appVolumes[bundleID] = {
+          volume: Math.max(0, Math.min(1, v.volume)),
+          muted: v.muted === true,
+        };
+      }
+    }
+  }
+
+  const isValidButtonAction = (v: unknown): v is ButtonAction => {
+    if (!v || typeof v !== 'object') return false;
+    const a = v as { type?: unknown; deviceName?: unknown };
+    if (a.type === 'none' || a.type === 'mute-channel' ||
+        a.type === 'media-play-pause' || a.type === 'media-next' ||
+        a.type === 'media-previous') return true;
+    return a.type === 'switch-output' && typeof a.deviceName === 'string';
+  };
+
+  const buttonActions = defaults.buttonActions.map((d, i) => {
+    const loadedAction = Array.isArray(loaded.buttonActions) ? loaded.buttonActions[i] : undefined;
+    return isValidButtonAction(loadedAction) ? loadedAction : d;
+  });
 
   return {
     inputChannels,
-    mixBuses,
-    hardwareMapping,
+    outputDeviceId,
+    appVolumes,
+    buttonActions,
+  };
+}
+
+/**
+ * Update the action of one knob press button
+ */
+export function updateButtonAction(
+  config: AudioRoutingConfig,
+  buttonIndex: number,
+  action: ButtonAction
+): AudioRoutingConfig {
+  return {
+    ...config,
+    buttonActions: config.buttonActions.map((a, i) => i === buttonIndex ? action : a),
   };
 }
 
@@ -161,62 +217,80 @@ export function updateChannelMuted(
 }
 
 /**
- * Update which channels are enabled in a mix bus
+ * Update a channel's assignment. Keeps assignments exclusive:
+ * a bundle ID assigned here is removed from all other channels, and at most
+ * one channel can hold the 'other-apps' assignment.
  */
-export function updateMixBusChannel(
+export function updateChannelAssignment(
   config: AudioRoutingConfig,
-  mixId: string,
   channelId: string,
-  enabled: boolean
+  assignment: ChannelAssignment
 ): AudioRoutingConfig {
+  const assignedBundleIDs = new Set(
+    assignment.type === 'apps' ? assignment.bundleIDs : []
+  );
+
   return {
     ...config,
-    mixBuses: config.mixBuses.map(bus => {
-      if (bus.id !== mixId) return bus;
-
-      const existingIndex = bus.channels.findIndex(c => c.channelId === channelId);
-
-      if (enabled && existingIndex === -1) {
-        // Add channel to mix
-        return {
-          ...bus,
-          channels: [...bus.channels, { channelId, enabled: true, gainOverride: null }],
-        };
-      } else if (!enabled && existingIndex !== -1) {
-        // Remove channel from mix
-        return {
-          ...bus,
-          channels: bus.channels.filter(c => c.channelId !== channelId),
-        };
-      } else if (existingIndex !== -1) {
-        // Update enabled state
-        return {
-          ...bus,
-          channels: bus.channels.map(c =>
-            c.channelId === channelId ? { ...c, enabled } : c
-          ),
-        };
+    inputChannels: config.inputChannels.map(channel => {
+      if (channel.id === channelId) {
+        return { ...channel, assignment };
       }
 
-      return bus;
+      // Steal 'other-apps' from any other channel that held it
+      if (assignment.type === 'other-apps' && channel.assignment.type === 'other-apps') {
+        return { ...channel, assignment: { type: 'none' as const } };
+      }
+
+      // Steal any bundle IDs now claimed by the target channel
+      if (assignedBundleIDs.size > 0 && channel.assignment.type === 'apps') {
+        const remaining = channel.assignment.bundleIDs.filter(b => !assignedBundleIDs.has(b));
+        if (remaining.length !== channel.assignment.bundleIDs.length) {
+          return {
+            ...channel,
+            assignment: remaining.length > 0
+              ? { type: 'apps' as const, bundleIDs: remaining }
+              : { type: 'none' as const },
+          };
+        }
+      }
+
+      return channel;
     }),
   };
 }
 
 /**
- * Update a mix bus's output device
+ * Update the output device for tapped audio
  */
-export function updateMixBusOutput(
+export function updateOutputDevice(
   config: AudioRoutingConfig,
-  mixId: string,
   outputDeviceId: number | null
 ): AudioRoutingConfig {
-  return {
-    ...config,
-    mixBuses: config.mixBuses.map(bus =>
-      bus.id === mixId
-        ? { ...bus, outputDeviceId }
-        : bus
-    ),
+  return { ...config, outputDeviceId };
+}
+
+/**
+ * Update a UI-set per-app volume. Entries at full volume and unmuted are
+ * dropped so the config only holds real overrides.
+ */
+export function updateAppVolume(
+  config: AudioRoutingConfig,
+  bundleID: string,
+  patch: Partial<AppVolume>
+): AudioRoutingConfig {
+  const current = config.appVolumes[bundleID] ?? { volume: 1, muted: false };
+  const next: AppVolume = {
+    volume: Math.max(0, Math.min(1, patch.volume ?? current.volume)),
+    muted: patch.muted ?? current.muted,
   };
+
+  const appVolumes = { ...config.appVolumes };
+  if (next.volume >= 1 && !next.muted) {
+    delete appVolumes[bundleID];
+  } else {
+    appVolumes[bundleID] = next;
+  }
+
+  return { ...config, appVolumes };
 }

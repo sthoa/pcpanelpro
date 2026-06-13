@@ -7,40 +7,44 @@ interface AudioOutputDevice {
   isDefault: boolean;
 }
 
+type ChannelAssignment =
+  | { type: 'apps'; bundleIDs: string[] }
+  | { type: 'other-apps' }
+  | { type: 'none' };
+
 interface ChannelState {
   id: string;
-  deviceName: string;
   channelName: string;
   hardwareIndex: number;
   volume: number;
   muted: boolean;
+  assignment: ChannelAssignment;
   isActive: boolean;
   apps: string[];
-}
-
-interface MixBusChannel {
-  channelId: string;
-  enabled: boolean;
-  gainOverride: number | null;
-}
-
-interface MixBusState {
-  id: string;
-  name: string;
-  outputDeviceId: number | null;
-  channels: MixBusChannel[];
   isRunning: boolean;
-  mixerHandle: number | null;
+}
+
+interface RunningApp {
+  bundleID: string;
+  name: string;
+  pids: number[];
+  isAudible: boolean;
+  icon: string | null;
+  isRegularApp: boolean;
+  volume: number;
+  muted: boolean;
+  isAssigned: boolean;
 }
 
 interface AudioRoutingState {
   channels: ChannelState[];
-  mixBuses: MixBusState[];
+  runningApps: RunningApp[];
   availableOutputs: AudioOutputDevice[];
+  outputDeviceId: number | null;
 }
 
 contextBridge.exposeInMainWorld('pcpanel', {
-  // Legacy event listeners
+  // Event listeners
   onDeviceStatus: (callback: (status: { connected: boolean; message: string }) => void) => {
     ipcRenderer.on('device-status', (_event, status) => callback(status));
   },
@@ -63,13 +67,13 @@ contextBridge.exposeInMainWorld('pcpanel', {
     ipcRenderer.on('toast', (_event, toast) => callback(toast));
   },
 
-  // Legacy API (for backward compatibility)
+  // Device API
   getDeviceState: () => ipcRenderer.invoke('get-device-state'),
   getOutputDevice: () => ipcRenderer.invoke('get-output-device'),
   getChannelActivity: () => ipcRenderer.invoke('get-channel-activity') as Promise<Record<number, { isActive: boolean; apps: string[] }>>,
   reconnect: () => ipcRenderer.invoke('reconnect-device'),
 
-  // New audio routing API
+  // Audio routing API
   getAudioRouting: () => ipcRenderer.invoke('get-audio-routing') as Promise<AudioRoutingState>,
   setChannelLabel: (channelId: string, label: string) =>
     ipcRenderer.invoke('set-channel-label', channelId, label) as Promise<AudioRoutingState>,
@@ -77,10 +81,22 @@ contextBridge.exposeInMainWorld('pcpanel', {
     ipcRenderer.invoke('set-channel-volume', channelId, volume) as Promise<boolean>,
   setChannelMuted: (channelId: string, muted: boolean) =>
     ipcRenderer.invoke('set-channel-muted', channelId, muted) as Promise<boolean>,
-  setChannelEnabled: (mixId: string, channelId: string, enabled: boolean) =>
-    ipcRenderer.invoke('set-channel-enabled-in-mix', mixId, channelId, enabled) as Promise<boolean>,
-  setMixOutput: (mixId: string, deviceId: number | null) =>
-    ipcRenderer.invoke('set-mix-output', mixId, deviceId) as Promise<boolean>,
+  setChannelAssignment: (channelId: string, assignment: ChannelAssignment) =>
+    ipcRenderer.invoke('set-channel-assignment', channelId, assignment) as Promise<AudioRoutingState>,
+  setOutputDevice: (deviceId: number | null) =>
+    ipcRenderer.invoke('set-output-device', deviceId) as Promise<boolean>,
+  getRunningApps: () =>
+    ipcRenderer.invoke('get-running-apps') as Promise<RunningApp[]>,
   getAvailableOutputs: () =>
     ipcRenderer.invoke('get-available-outputs') as Promise<AudioOutputDevice[]>,
+  setAppVolume: (bundleID: string, volume: number) =>
+    ipcRenderer.invoke('set-app-volume', bundleID, volume) as Promise<boolean>,
+  setAppMuted: (bundleID: string, muted: boolean) =>
+    ipcRenderer.invoke('set-app-muted', bundleID, muted) as Promise<boolean>,
+  reportContentHeight: (height: number) => ipcRenderer.send('content-height', height),
+  setButtonAction: (buttonIndex: number, action: unknown) =>
+    ipcRenderer.invoke('set-button-action', buttonIndex, action),
+  getLighting: () => ipcRenderer.invoke('get-lighting'),
+  setLighting: (config: unknown) => ipcRenderer.invoke('set-lighting', config),
+  quitApp: () => ipcRenderer.invoke('quit-app') as Promise<void>,
 });

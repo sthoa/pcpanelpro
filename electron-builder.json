@@ -15,15 +15,16 @@
       "from": "native/build/Release/",
       "to": "native/",
       "filter": ["*.node"]
-    },
-    {
-      "from": "driver/build/PCPanelAudio.driver",
-      "to": "driver/PCPanelAudio.driver"
     }
   ],
   "mac": {
     "category": "public.app-category.utilities",
     "icon": "build/icon.icns",
+    "minimumSystemVersion": "14.4",
+    "extendInfo": {
+      "LSUIElement": true,
+      "NSAudioCaptureUsageDescription": "PC Panel Pro captures the audio of the apps you assign to its knobs and sliders so it can control their volume."
+    },
     "target": [
       {
         "target": "dmg",

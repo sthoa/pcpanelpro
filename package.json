@@ -13,8 +13,8 @@
     "install:driver": "bash scripts/install-driver.sh",
     "start": "npm run build && electron .",
     "rebuild": "electron-rebuild -f -w node-hid pcpanel_audio",
-    "pack": "npm run build && npm run build:driver && npm run build:icon && npm run rebuild && electron-builder --dir",
-    "dist": "npm run build && npm run build:driver && npm run build:icon && npm run rebuild && electron-builder",
+    "pack": "npm run build && npm run build:icon && npm run rebuild && electron-builder --dir",
+    "dist": "npm run build && npm run build:icon && npm run rebuild && electron-builder",
     "dist:local": "bash scripts/package-local.sh"
   },
   "author": "",

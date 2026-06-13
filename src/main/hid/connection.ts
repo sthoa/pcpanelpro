@@ -98,4 +98,23 @@ export class PCPanelConnection extends EventEmitter {
       return false;
     }
   }
+
+  /**
+   * Write raw output packets (lighting commands etc.) to the device
+   */
+  sendPackets(packets: Buffer[]): boolean {
+    if (!this.device) {
+      return false;
+    }
+
+    try {
+      for (const packet of packets) {
+        this.device.write(packet);
+      }
+      return true;
+    } catch (error) {
+      this.emit('error', error);
+      return false;
+    }
+  }
 }

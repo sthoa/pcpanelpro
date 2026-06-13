@@ -187,3 +187,152 @@ export function getDeviceProfileOrDefault(vendorId: number, productId: number, n
     ...UNKNOWN_DEVICE_PROFILE,
   };
 }
+
+// ============================================================================
+// Lighting (PC Panel Pro)
+// ============================================================================
+//
+// 64-byte zero-padded output packets. Global brightness (0-100) is baked in
+// by scaling every color component. Custom packets carry one 7-byte block per
+// control: a mode byte followed by one or two RGB triples.
+
+export const LIGHT_PREFIX_PRO = 0x05;
+
+export const LIGHT_TARGET_SLIDER = 0x00;
+export const LIGHT_TARGET_SLIDER_LABEL = 0x01;
+export const LIGHT_TARGET_KNOB = 0x02;
+export const LIGHT_TARGET_LOGO = 0x03;
+export const LIGHT_TARGET_ANIMATION = 0x04;
+
+const ANIM_RAINBOW_HORIZONTAL = 0x01;
+const ANIM_WAVE = 0x03;
+const ANIM_BREATH = 0x04;
+const ANIM_STATIC_ALL = 0x02;
+
+function parseHexColor(hex: string): [number, number, number] {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m) return [0, 0, 0];
+  const v = parseInt(m[1], 16);
+  return [(v >> 16) & 0xff, (v >> 8) & 0xff, v & 0xff];
+}
+
+function scaled(value: number, brightness: number): number {
+  return Math.max(0, Math.min(255, Math.round((brightness / 100) * value)));
+}
+
+function writeColor(packet: Buffer, offset: number, hex: string, brightness: number): void {
+  const [r, g, b] = parseHexColor(hex);
+  packet[offset] = scaled(r, brightness);
+  packet[offset + 1] = scaled(g, brightness);
+  packet[offset + 2] = scaled(b, brightness);
+}
+
+/** Static color per knob ring; null leaves a knob dark */
+export function createKnobLightingPacket(brightness: number, colors: (string | null)[]): Buffer {
+  const packet = Buffer.alloc(PACKET_SIZE);
+  packet[0] = LIGHT_PREFIX_PRO;
+  packet[1] = LIGHT_TARGET_KNOB;
+  colors.forEach((color, i) => {
+    if (!color) return;
+    const offset = 2 + i * 7;
+    packet[offset] = 0x01;  // static
+    writeColor(packet, offset + 1, color, brightness);
+  });
+  return packet;
+}
+
+/** Slider LED tracks: a gradient from bottom to top color (same color = solid) */
+export function createSliderLightingPacket(
+  brightness: number,
+  sliders: ({ color1: string; color2: string; volumeGradient: boolean } | null)[]
+): Buffer {
+  const packet = Buffer.alloc(PACKET_SIZE);
+  packet[0] = LIGHT_PREFIX_PRO;
+  packet[1] = LIGHT_TARGET_SLIDER;
+  sliders.forEach((slider, i) => {
+    if (!slider) return;
+    const offset = 2 + i * 7;
+    packet[offset] = slider.volumeGradient ? 0x03 : 0x01;
+    writeColor(packet, offset + 1, slider.color1, brightness);
+    writeColor(packet, offset + 4, slider.color2, brightness);
+  });
+  return packet;
+}
+
+/** Static color per slider label */
+export function createSliderLabelLightingPacket(brightness: number, colors: (string | null)[]): Buffer {
+  const packet = Buffer.alloc(PACKET_SIZE);
+  packet[0] = LIGHT_PREFIX_PRO;
+  packet[1] = LIGHT_TARGET_SLIDER_LABEL;
+  colors.forEach((color, i) => {
+    if (!color) return;
+    const offset = 2 + i * 7;
+    packet[offset] = 0x01;  // static
+    writeColor(packet, offset + 1, color, brightness);
+  });
+  return packet;
+}
+
+/** Static logo color */
+export function createLogoLightingPacket(brightness: number, color: string | null): Buffer {
+  const packet = Buffer.alloc(PACKET_SIZE);
+  packet[0] = LIGHT_PREFIX_PRO;
+  packet[1] = LIGHT_TARGET_LOGO;
+  if (color) {
+    packet[2] = 0x01;  // static
+    writeColor(packet, 3, color, brightness);
+  }
+  return packet;
+}
+
+/** Whole-panel single color (also used with black for "off") */
+export function createStaticAllPacket(brightness: number, color: string): Buffer {
+  const packet = Buffer.alloc(PACKET_SIZE);
+  packet[0] = LIGHT_PREFIX_PRO;
+  packet[1] = LIGHT_TARGET_ANIMATION;
+  packet[2] = ANIM_STATIC_ALL;
+  writeColor(packet, 3, color, brightness);
+  return packet;
+}
+
+/** Whole-panel rainbow animation */
+export function createRainbowPacket(brightness: number, speed: number): Buffer {
+  const packet = Buffer.alloc(PACKET_SIZE);
+  packet[0] = LIGHT_PREFIX_PRO;
+  packet[1] = LIGHT_TARGET_ANIMATION;
+  packet[2] = ANIM_RAINBOW_HORIZONTAL;
+  packet[3] = 0;     // phase shift
+  packet[4] = 0xff;  // saturation
+  packet[5] = scaled(255, brightness);
+  packet[6] = speed & 0xff;
+  packet[7] = 0;     // reverse
+  return packet;
+}
+
+/** Whole-panel wave animation in a hue (0-255) */
+export function createWavePacket(brightness: number, hue: number, speed: number): Buffer {
+  const packet = Buffer.alloc(PACKET_SIZE);
+  packet[0] = LIGHT_PREFIX_PRO;
+  packet[1] = LIGHT_TARGET_ANIMATION;
+  packet[2] = ANIM_WAVE;
+  packet[3] = hue & 0xff;
+  packet[4] = 0xff;  // saturation
+  packet[5] = scaled(255, brightness);
+  packet[6] = speed & 0xff;
+  packet[7] = 0;     // reverse
+  packet[8] = 0;     // bounce
+  return packet;
+}
+
+/** Whole-panel breathing animation in a hue (0-255) */
+export function createBreathPacket(brightness: number, hue: number, speed: number): Buffer {
+  const packet = Buffer.alloc(PACKET_SIZE);
+  packet[0] = LIGHT_PREFIX_PRO;
+  packet[1] = LIGHT_TARGET_ANIMATION;
+  packet[2] = ANIM_BREATH;
+  packet[3] = hue & 0xff;
+  packet[4] = 0xff;  // saturation
+  packet[5] = scaled(255, brightness);
+  packet[6] = speed & 0xff;
+  return packet;
+}

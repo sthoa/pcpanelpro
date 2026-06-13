@@ -1,9 +1,10 @@
-import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, nativeTheme, screen } from 'electron';
+import * as fs from 'fs';
 import * as path from 'path';
 import { scanForDevices, PCPanelConnection, DeviceState, DeviceEvent } from './hid';
 import { audioRouting } from './audio/routing';
-import { CHANNEL_DEFINITIONS } from './audio/types';
-import { isDriverInstalled, promptAndInstallDriver, showDriverNotInstalledWarning, isFirstLaunch, markFirstLaunchComplete } from './driver/installer';
+import { ChannelAssignment } from './audio/types';
+import { lightingManager, LightingConfig } from './lighting';
 
 let mainWindow: BrowserWindow | null = null;
 let connection: PCPanelConnection | null = null;
@@ -22,14 +23,8 @@ if (!gotTheLock) {
 } else {
   // This is the primary instance - handle second-instance event
   app.on('second-instance', () => {
-    // Someone tried to run a second instance, focus our window instead
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) {
-        mainWindow.restore();
-      }
-      mainWindow.show();
-      mainWindow.focus();
-    }
+    // Someone tried to run a second instance, show our popover instead
+    showPopover();
   });
 }
 
@@ -51,61 +46,129 @@ function logError(...args: unknown[]): void {
 }
 
 function createTray(): void {
-  // Load the tray icon
+  // Mixer-sliders glyph; createFromPath picks up the @2x file for retina
   const iconPath = path.join(__dirname, 'assets', 'tray-icon.png');
-  const icon = nativeImage.createFromPath(iconPath);
-
-  // For macOS, resize to 16x16 for menu bar (will be displayed at 16x16 or 32x32 on retina)
-  const trayIcon = icon.resize({ width: 16, height: 16 });
+  const trayIcon = nativeImage.createFromPath(iconPath);
   trayIcon.setTemplateImage(true); // Makes icon adapt to dark/light mode on macOS
 
   tray = new Tray(trayIcon);
   tray.setToolTip('PC Panel Pro');
 
-  const contextMenu = Menu.buildFromTemplate([
-    {
-      label: 'Show Window',
-      click: () => {
-        if (mainWindow) {
-          mainWindow.show();
-          mainWindow.focus();
-        } else {
-          createWindow();
-        }
-      },
-    },
-    { type: 'separator' },
-    {
-      label: 'Quit',
-      click: () => {
-        isQuitting = true;
-        app.quit();
-      },
-    },
-  ]);
-
-  tray.setContextMenu(contextMenu);
-
-  // Click on tray icon shows the window
+  // Left-click toggles the popover; right-click shows the menu
   tray.on('click', () => {
-    if (mainWindow) {
-      if (mainWindow.isVisible()) {
-        mainWindow.focus();
-      } else {
-        mainWindow.show();
-      }
-    } else {
-      createWindow();
-    }
+    togglePopover();
+  });
+
+  tray.on('right-click', () => {
+    tray?.popUpContextMenu(Menu.buildFromTemplate([
+      {
+        label: 'Quit PC Panel Pro',
+        click: () => {
+          isQuitting = true;
+          app.quit();
+        },
+      },
+    ]));
   });
 }
 
+// Popovers hide on blur; clicking the tray icon while open first blurs the
+// window, so without this timestamp the click would immediately re-open it
+let lastBlurHide = 0;
+let fadeTimer: NodeJS.Timeout | null = null;
+
+function cancelFade(): void {
+  if (fadeTimer) {
+    clearInterval(fadeTimer);
+    fadeTimer = null;
+  }
+}
+
+function showPopover(): void {
+  if (!mainWindow) {
+    createWindow();
+  }
+  if (!mainWindow) return;
+
+  cancelFade();
+  mainWindow.setOpacity(1);
+
+  // Anchor flush below the menu bar, left-aligned with the tray icon like a
+  // native menu; right-align instead when that would clip the screen edge
+  if (tray) {
+    const trayBounds = tray.getBounds();
+    const [width] = mainWindow.getSize();
+    const display = screen.getDisplayNearestPoint({ x: trayBounds.x, y: trayBounds.y });
+    const workArea = display.workArea;
+
+    let x = Math.round(trayBounds.x - 2);
+    if (x + width > workArea.x + workArea.width - 2) {
+      x = Math.round(trayBounds.x + trayBounds.width - width + 2);
+    }
+    x = Math.max(x, workArea.x + 2);
+    const y = Math.round(trayBounds.y + trayBounds.height);
+
+    mainWindow.setPosition(x, y, false);
+  }
+
+  // Appears instantly, like a native menu
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function hidePopover(): void {
+  if (!mainWindow || !mainWindow.isVisible() || fadeTimer) return;
+
+  // Native-menu dismiss: fade out over 300ms with ease-in-out
+  const duration = 300;
+  const start = Date.now();
+  fadeTimer = setInterval(() => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      cancelFade();
+      return;
+    }
+    const t = Math.min(1, (Date.now() - start) / duration);
+    const eased = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    mainWindow.setOpacity(1 - eased);
+    if (t >= 1) {
+      cancelFade();
+      mainWindow.hide();
+      mainWindow.setOpacity(1);
+    }
+  }, 16);
+}
+
+function togglePopover(): void {
+  if (Date.now() - lastBlurHide < 300) {
+    // The click that blurred (and started hiding) the popover landed on the
+    // tray icon — treat it as "close", not "reopen"
+    hidePopover();
+  } else if (mainWindow?.isVisible() && !fadeTimer) {
+    hidePopover();
+  } else {
+    showPopover();
+  }
+}
+
 function createWindow(): void {
+  // The renderer palette is dark-only; keep the vibrancy material dark too
+  nativeTheme.themeSource = 'dark';
+
   mainWindow = new BrowserWindow({
-    width: 800,
-    height: 600,
+    width: 510,
+    height: 560,
     useContentSize: true,
-    resizable: true,
+    show: false,
+    frame: false,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    transparent: true,
+    vibrancy: 'popover',
+    visualEffectState: 'active',
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -113,33 +176,42 @@ function createWindow(): void {
     },
   });
 
+  // Behave like a menu bar popover: float above other windows, follow the
+  // active Space, and dismiss when focus is lost or Escape is pressed
+  mainWindow.setAlwaysOnTop(true, 'floating');
+  mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+
+  mainWindow.on('blur', () => {
+    if (!isQuitting) {
+      lastBlurHide = Date.now();
+      hidePopover();
+    }
+  });
+
+  mainWindow.webContents.on('before-input-event', (_event, input) => {
+    if (input.type === 'keyDown' && input.key === 'Escape') {
+      hidePopover();
+    }
+  });
+
   mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
 
-  // Auto-resize window to fit content when ready
-  mainWindow.webContents.once('did-finish-load', () => {
-    mainWindow?.webContents.executeJavaScript(`
-      (function() {
-        const body = document.body;
-        const html = document.documentElement;
-        const width = Math.max(body.scrollWidth, body.offsetWidth, html.clientWidth, html.scrollWidth, html.offsetWidth);
-        const height = Math.max(body.scrollHeight, body.offsetHeight, html.clientHeight, html.scrollHeight, html.offsetHeight);
-        return { width, height };
-      })();
-    `).then((size: { width: number; height: number }) => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        // Add some padding and ensure minimum size
-        const padding = 40;
-        const minWidth = 640;
-        const minHeight = 400;
-        const newWidth = Math.max(size.width + padding, minWidth);
-        const newHeight = Math.max(size.height + padding, minHeight);
-        mainWindow.setContentSize(newWidth, newHeight);
-        mainWindow.center();
-      }
-    }).catch(() => {
-      // Ignore errors - fallback to default size
+  // Dev aid: PCPANEL_SCREENSHOT=/path.png captures the window after load
+  const screenshotPath = process.env.PCPANEL_SCREENSHOT;
+  if (screenshotPath) {
+    mainWindow.webContents.once('did-finish-load', () => {
+      mainWindow?.show();
+      setTimeout(async () => {
+        try {
+          const image = await mainWindow!.webContents.capturePage();
+          fs.writeFileSync(screenshotPath, image.toPNG());
+          log('Screenshot saved to', screenshotPath);
+        } catch (err) {
+          logError('Screenshot failed:', err);
+        }
+      }, 9000);
     });
-  });
+  }
 
   // Hide window instead of closing (keep app running in tray)
   mainWindow.on('close', (event) => {
@@ -200,6 +272,7 @@ async function connectToDevice(): Promise<void> {
   connection.on('connected', () => {
     log(`Connected to ${device.profile.name}`);
     sendToRenderer('device-status', { connected: true, message: `Connected to ${device.profile.name}` });
+    lightingManager.attach(connection!);
 
     // Request current device state to initialize volumes
     setTimeout(() => {
@@ -208,6 +281,11 @@ async function connectToDevice(): Promise<void> {
         connection.requestState();
       }
     }, 100);
+
+    // Restore the configured lighting (the panel boots dark)
+    setTimeout(() => {
+      lightingManager.apply();
+    }, 300);
   });
 
   connection.on('disconnected', () => {
@@ -221,6 +299,11 @@ async function connectToDevice(): Promise<void> {
     // Update volume when knob or slider changes
     if (event.type === 'knob-change') {
       audioRouting.handleHardwareChange(event.index, event.value);
+    } else if (event.type === 'button-change' && event.pressed) {
+      const message = audioRouting.handleButtonPress(event.index);
+      if (message) {
+        sendToRenderer('toast', { type: 'info', message, duration: 2000 });
+      }
     } else if (event.type === 'state-response') {
       // Apply all initial volume values from device state
       log('Received device state, applying initial volumes');
@@ -258,69 +341,12 @@ function startDeviceScanning(): void {
 }
 
 app.whenReady().then(async () => {
-  const firstLaunch = isFirstLaunch();
-
   createTray();
   createWindow();
 
-  // Check driver status after window is created so we can send toasts
-  // Wait a moment for the renderer to be ready
-  setTimeout(async () => {
-    const driverInstalled = isDriverInstalled();
-
-    if (firstLaunch) {
-      // First launch: show full dialog prompts
-      log('First launch - checking driver status...');
-      if (!driverInstalled) {
-        log('Audio driver not installed, prompting user...');
-        const installed = await promptAndInstallDriver();
-        if (!installed) {
-          await showDriverNotInstalledWarning();
-        }
-      }
-      markFirstLaunchComplete();
-    } else {
-      // Subsequent launches: use toast notifications
-      if (driverInstalled) {
-        sendToRenderer('toast', {
-          type: 'success',
-          message: 'Audio driver ready',
-          duration: 2000
-        });
-        log('Driver check passed');
-      } else {
-        // Driver is missing - show toast first, then prompt to reinstall
-        sendToRenderer('toast', {
-          type: 'warning',
-          message: 'Audio driver not found - prompting for reinstall...',
-          duration: 3000
-        });
-        log('Audio driver missing, prompting for reinstall...');
-
-        // Wait for toast to show, then prompt
-        setTimeout(async () => {
-          const installed = await promptAndInstallDriver();
-          if (installed) {
-            sendToRenderer('toast', {
-              type: 'success',
-              message: 'Audio driver installed successfully',
-              duration: 3000
-            });
-          } else {
-            sendToRenderer('toast', {
-              type: 'error',
-              message: 'Per-app volume control unavailable without driver',
-              duration: 5000
-            });
-          }
-        }, 500);
-      }
-    }
-  }, 500);
-
   startDeviceScanning();
 
-  // Start audio routing (BEACN-style mixer)
+  // Start audio routing (per-app process taps)
   setTimeout(() => {
     log('Starting audio routing...');
     audioRouting.initialize();
@@ -337,7 +363,7 @@ app.whenReady().then(async () => {
       const levels = audioRouting.getAudioLevels();
       sendToRenderer('audio-levels', levels);
     }, 50); // Poll every 50ms for smooth metering
-  }, 2000); // Wait for driver to be ready
+  }, 500);
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -411,9 +437,8 @@ ipcMain.handle('reconnect-device', async () => {
 
 ipcMain.handle('get-output-device', () => {
   const state = audioRouting.getState();
-  const personalMix = state.mixBuses.find(m => m.id === 'personal');
-  if (personalMix && personalMix.outputDeviceId !== null) {
-    const output = state.availableOutputs.find(o => o.id === personalMix.outputDeviceId);
+  if (state.outputDeviceId !== null) {
+    const output = state.availableOutputs.find(o => o.id === state.outputDeviceId);
     if (output) return output;
   }
   // Return default output
@@ -427,7 +452,7 @@ ipcMain.handle('get-channel-activity', () => {
 // Audio routing IPC handlers
 ipcMain.handle('get-audio-routing', () => {
   const state = audioRouting.getState();
-  log('get-audio-routing IPC called, returning:', JSON.stringify(state.channels.map(c => ({ id: c.id, hardwareIndex: c.hardwareIndex }))));
+  log(`get-audio-routing: ${state.channels.length} channels, ${state.runningApps.length} apps`);
   return state;
 });
 
@@ -446,14 +471,65 @@ ipcMain.handle('set-channel-muted', (_event, channelId: string, muted: boolean) 
   return true;
 });
 
-ipcMain.handle('set-channel-enabled-in-mix', (_event, mixId: string, channelId: string, enabled: boolean) => {
-  audioRouting.setChannelEnabledInMix(mixId, channelId, enabled);
+ipcMain.handle('set-channel-assignment', (_event, channelId: string, assignment: ChannelAssignment) => {
+  audioRouting.setChannelAssignment(channelId, assignment);
+  return audioRouting.getState();
+});
+
+ipcMain.handle('set-output-device', (_event, deviceId: number | null) => {
+  if (deviceId === null) {
+    audioRouting.setOutputDevice(null);
+    return true;
+  }
+  // The header dropdown switches the actual system default output
+  return audioRouting.switchSystemOutput(deviceId);
+});
+
+ipcMain.handle('get-running-apps', () => {
+  return audioRouting.getState().runningApps;
+});
+
+ipcMain.handle('set-app-volume', (_event, bundleID: string, volume: number) => {
+  audioRouting.setAppVolume(bundleID, volume);
   return true;
 });
 
-ipcMain.handle('set-mix-output', (_event, mixId: string, deviceId: number | null) => {
-  audioRouting.setMixOutput(mixId, deviceId);
+ipcMain.handle('set-app-muted', (_event, bundleID: string, muted: boolean) => {
+  audioRouting.setAppMuted(bundleID, muted);
   return true;
+});
+
+ipcMain.handle('set-button-action', (_event, buttonIndex: number, action: import('./audio/types').ButtonAction) => {
+  audioRouting.setButtonAction(buttonIndex, action);
+  return audioRouting.getState();
+});
+
+ipcMain.handle('get-lighting', () => {
+  return lightingManager.getConfig();
+});
+
+ipcMain.handle('set-lighting', (_event, config: Partial<LightingConfig>) => {
+  lightingManager.setConfig(config);
+  return lightingManager.getConfig();
+});
+
+ipcMain.handle('quit-app', () => {
+  isQuitting = true;
+  app.quit();
+});
+
+// The renderer reports its natural content height (via ResizeObserver) so
+// the popover hugs its content as the app list grows and shrinks
+ipcMain.on('content-height', (_event, height: number) => {
+  if (typeof height !== 'number' || height < 200 || height > 2000) return;
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const clamped = Math.min(Math.ceil(height), 660);
+  const [, currentHeight] = mainWindow.getContentSize();
+  if (clamped === currentHeight) return;
+  // Transparent frameless windows ignore resizes while resizable=false
+  mainWindow.setResizable(true);
+  mainWindow.setContentSize(510, clamped);
+  mainWindow.setResizable(false);
 });
 
 ipcMain.handle('get-available-outputs', () => {

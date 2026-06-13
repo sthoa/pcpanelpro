@@ -13,10 +13,6 @@ cd "$PROJECT_DIR"
 echo "Building Electron app..."
 npm run build
 
-# Build the audio driver
-echo "Building audio driver..."
-npm run build:driver
-
 # Create app icon
 echo "Creating app icon..."
 npm run build:icon

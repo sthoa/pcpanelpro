@@ -1,21 +1,27 @@
 # PC Panel Pro - macOS Controller
 
-A macOS application for controlling per-app audio volume using the PC Panel Pro hardware mixer.
+A macOS application for controlling per-app audio volume using the PC Panel Pro hardware mixer — like the official Windows app or SoundSource.
 
 ## Features
 
-- **9 Virtual Audio Devices**: Creates virtual output devices (K1-K5 for knobs, S1-S4 for sliders) that apps can use as audio outputs
-- **Real-time Volume Control**: Hardware knob/slider movements instantly adjust the volume of audio routed through each channel
-- **Audio Activity Detection**: Visual feedback showing which channels have active audio
-- **System Tray Support**: App runs in the background with menu bar icon
-- **React UI**: Modern interface showing device status, channel activity, and controls
+- **Per-App Volume Control**: Assign any running app (or "all other apps") to a knob or slider; the hardware then controls that app's volume directly
+- **Core Audio Process Taps**: Uses the public tapping API (macOS 14.4+) — no kernel extensions, no virtual devices, no changing app output devices
+- **Real-time Volume Control**: Hardware knob/slider movements instantly adjust the assigned apps' volume
+- **Audio Activity Detection**: Per-channel level meters and activity indicators
+- **Menu Bar Agent**: Runs in the background with a menu bar icon
+- **React UI**: Interface for assigning apps, renaming channels, and monitoring levels
+
+## How it works
+
+Each channel creates a Core Audio **process tap** over the assigned apps' audio. The tap mutes those apps at the system output and delivers their samples to the app, which replays them through the real output device at the knob-controlled gain. Apps don't need to be reconfigured and are unaware anything changed.
+
+The first time a channel is assigned, macOS asks for **System Audio Recording** permission — this is required for process taps and must be granted.
 
 ## Prerequisites
 
-- macOS 12.0 or later
+- macOS 14.4 or later (process tap API)
 - Node.js 18+ and npm
 - Xcode Command Line Tools (`xcode-select --install`)
-- CMake (`brew install cmake`)
 - PC Panel Pro hardware device
 
 ## Quick Start
@@ -23,92 +29,73 @@ A macOS application for controlling per-app audio volume using the PC Panel Pro 
 ```bash
 # Clone the repository
 git clone <repo-url>
-cd pcpanelpro
+cd pcpanel
 
-# Run setup (fetches dependencies, installs npm packages)
-npm run setup
+# Install npm dependencies
+npm install
+
+# Build the native addon
+npm run build:native
 
 # Build and run the app
 npm run start
 ```
 
-## Installation
-
-### 1. Setup Development Environment
+## Install as an app
 
 ```bash
-npm run setup
+npm run pack
+cp -R "release/mac-arm64/PC Panel Pro.app" /Applications/
+xattr -dr com.apple.quarantine "/Applications/PC Panel Pro.app"
+rm -rf release   # avoid duplicate Launchpad/Spotlight entries
 ```
 
-This script:
-- Fetches libASPL v3.1.2 (Core Audio driver library)
-- Installs npm dependencies
+The packaged app is already a menu bar agent (`LSUIElement`) and carries the
+`NSAudioCaptureUsageDescription` required for the permission prompt. Add it to
+**System Settings → General → Login Items** to start at login.
 
-### 2. Build and Install the Audio Driver
-
-The audio driver creates 9 virtual audio devices that appear in System Settings.
-
-```bash
-# Build the driver
-npm run build:driver
-
-# Install the driver (requires sudo password)
-npm run install:driver
-```
-
-After installation, you should see "PCPanel K1" through "PCPanel S4" in System Settings > Sound > Output.
-
-### 3. Run the App
-
-```bash
-npm run start
-```
+Note: the app is ad-hoc signed, so macOS re-asks for System Audio Recording
+(and input monitoring) permission after each rebuild/reinstall.
 
 ## Usage
 
-1. **Assign Apps to Channels**: In each app's audio settings (or System Settings > Sound), select a PCPanel device (K1-K5, S1-S4) as the output device
-2. **Control Volume**: Turn the corresponding knob or move the slider on your PC Panel Pro hardware
-3. **Monitor Activity**: The app shows which channels have active audio (green indicator)
+1. **Assign Apps to Channels**: Click "Assign apps…" under a knob/slider and pick one or more running apps. One channel can also be set to "All other apps".
+2. **Control Volume**: Turn the corresponding knob or move the slider on your PC Panel Pro hardware.
+3. **Monitor Activity**: The app shows live level meters per channel.
+4. **Rename Channels**: Click a channel name to rename it.
 
 ## Available Scripts
 
 | Command | Description |
 |---------|-------------|
-| `npm run setup` | Fetch dependencies and install npm packages |
 | `npm run build` | Build the Electron app |
 | `npm run start` | Build and run the app |
 | `npm run build:native` | Rebuild the native audio addon |
-| `npm run build:driver` | Build the Core Audio HAL driver |
-| `npm run install:driver` | Install driver to system (requires sudo) |
 | `npm run rebuild` | Rebuild native modules for Electron |
+| `npm run pack` | Build everything and package the .app |
+| `npm run dist` | Package distributable dmg/zip |
 
 ## Project Structure
 
 ```
-pcpanelpro/
+pcpanel/
 ├── src/
 │   ├── main/                 # Electron main process
 │   │   ├── index.ts          # App entry point, window management, tray
 │   │   ├── preload.ts        # IPC bridge for renderer
-│   │   ├── audio/            # Audio passthrough module
+│   │   ├── audio/            # Per-app routing (taps, config, types)
 │   │   └── hid/              # USB HID communication
 │   └── renderer/             # React UI
 │       ├── App.tsx           # Main React component
-│       ├── components/       # UI components (Knob, Slider, Button, Status)
+│       ├── components/       # UI components (Knob, Slider, AppPicker, ...)
 │       └── styles.css        # Styling
-├── native/                   # Node.js native addon
+├── native/                   # Node.js native addon (N-API)
 │   ├── binding.gyp           # Build configuration
 │   └── src/
-│       └── audio_passthrough.mm  # CoreAudio passthrough implementation
-├── driver/                   # Core Audio HAL plugin
-│   ├── CMakeLists.txt        # CMake build config
-│   ├── Info.plist.in         # Bundle info template
-│   └── src/
-│       └── Driver.cpp        # Virtual device implementation
+│       ├── audio_passthrough.mm  # Device passthrough/mixer (legacy)
+│       └── process_tap.mm        # Per-app process taps (macOS 14.4+)
+├── driver/                   # Legacy Core Audio HAL plugin (no longer used)
 ├── scripts/                  # Build/setup scripts
-│   ├── setup.sh              # Development setup
-│   ├── build-driver.sh       # Driver build wrapper
-│   └── install-driver.sh     # Driver installation
 ├── package.json
 └── tsconfig.json
 ```
@@ -124,25 +111,39 @@ pcpanelpro/
 ┌─────────────────────────────▼───────────────────────────────┐
 │                      Electron App                            │
 │  • Reads knob/slider positions via HID                       │
-│  • Controls volume of each virtual device                    │
-│  • Shows audio activity in React UI                          │
+│  • Maps each channel to assigned apps (by bundle ID)         │
+│  • Reconciles taps as apps launch/quit every 2s              │
 └─────────────────────────────┬───────────────────────────────┘
-                              │ CoreAudio APIs
+                              │ CoreAudio process tap API
 ┌─────────────────────────────▼───────────────────────────────┐
-│              PCPanelAudio.driver (HAL Plugin)                │
-│  • Creates 9 virtual output devices                          │
-│  • Apps output audio to assigned virtual device              │
-│  • Audio passes through to real output with volume control   │
+│            One process tap + aggregate per channel           │
+│  • Tap captures assigned apps' audio and mutes the original  │
+│  • IOProc applies knob gain and plays to the output device   │
+│  • Peak/RMS measured for UI meters                           │
 └─────────────────────────────────────────────────────────────┘
 ```
 
+## Legacy virtual-device driver
+
+Earlier versions used a HAL driver (`PCPanelAudio.driver`) that created 9
+virtual output devices. It is no longer needed. If it's still installed,
+remove it with:
+
+```bash
+sudo rm -rf /Library/Audio/Plug-Ins/HAL/PCPanelAudio.driver
+sudo killall coreaudiod
+```
+
+The `driver/` sources and `npm run build:driver` / `npm run install:driver`
+scripts remain in the repo for reference only.
+
 ## Troubleshooting
 
-### Virtual devices not appearing
+### Channels don't affect app volume
 
-1. Ensure the driver is installed: `ls /Library/Audio/Plug-Ins/HAL/ | grep PCPanel`
-2. Restart Core Audio: `sudo launchctl kickstart -k system/com.apple.audio.coreaudiod`
-3. Check system logs: `log show --predicate 'subsystem == "com.apple.audio"' --last 5m`
+1. Check System Audio Recording permission: **System Settings → Privacy & Security → Screen & System Audio Recording → System Audio Recording** — "PC Panel Pro" must be enabled
+2. Re-open the assignment picker and confirm the app is still assigned (assignments follow the app's bundle ID)
+3. Some apps split audio across helper processes; the app groups them by responsible process, but a relaunch of the target app will be picked up within ~2 seconds
 
 ### App can't connect to hardware
 
@@ -153,8 +154,7 @@ pcpanelpro/
 ### Build errors
 
 1. Ensure Xcode Command Line Tools are installed: `xcode-select --install`
-2. Ensure CMake is installed: `brew install cmake`
-3. Re-run setup: `rm -rf libASPL && npm run setup`
+2. Native addon requires the macOS 14.4 SDK or newer
 
 ## License
 
