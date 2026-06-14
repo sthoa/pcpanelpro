@@ -7,24 +7,6 @@ drop-down panel in the menu bar. The interface is modeled on
 [FineTune](https://github.com/ronitsingh10/FineTune); the implementation here
 is original.
 
-## Screenshots
-
-<table>
-  <tr>
-    <td align="center"><b>Apps</b></td>
-    <td align="center"><b>Knobs &amp; Sliders</b></td>
-    <td align="center"><b>Lighting</b></td>
-  </tr>
-  <tr>
-    <td valign="top"><img src="docs/apps.png" width="250" alt="Per-app volume mixer"></td>
-    <td valign="top"><img src="docs/knobs-sliders.png" width="250" alt="Hardware channel mapping and knob-button actions"></td>
-    <td valign="top"><img src="docs/lights.png" width="250" alt="RGB lighting controls"></td>
-  </tr>
-</table>
-
-> The app is a translucent menu bar popover; these shots use an opaque
-> background for clarity.
-
 ## Features
 
 - **Per-app volume** — a live mixer listing every app currently playing audio,
