@@ -17,8 +17,8 @@ is original.
   bind a knob press to switch to a specific device.
 - **Knob-button actions** — each knob press can toggle mute, switch output, or
   send media keys (play/pause, next, previous).
-- **RGB lighting** — per-knob / per-slider colors, or whole-panel rainbow, wave,
-  and breath animations.
+- **RGB lighting** — per-knob / per-slider colors with per-control brightness
+  and on/off toggles, or whole-panel rainbow and breath animations.
 - **Menu bar popover** — click the menu bar icon and the panel drops down; it
   dismisses on click-away or Escape. Runs as a background agent (no Dock icon).
 - **No virtual devices, no kernel extension** — uses Apple's public Core Audio
@@ -110,9 +110,11 @@ Below them, **Knob Buttons** assigns an action to each knob's press (K1–K5):
 
 Choose a mode: **Custom** (per-knob ring color, per-slider track + label colors
 with an optional volume-tracking fill, and a logo color), or whole-panel
-**Rainbow / Wave / Breath** animations with hue and speed. A global brightness
-applies to all. Settings persist and are re-applied whenever the panel connects
-(it boots dark until the app sends lighting).
+**Rainbow / Breath** animations with hue and speed. In Custom mode each knob,
+each slider, and the logo also has its own brightness bar and a sun-icon toggle
+to turn that LED on or off, on top of the global brightness slider that scales
+everything. Settings persist and are re-applied whenever the panel connects (it
+boots dark until the app sends lighting).
 
 ## Scripts
 
