@@ -217,6 +217,9 @@ for reference only.
 
 ## Credits
 
+- Originally based on [trezy/pcpanel](https://github.com/trezy/pcpanel) by
+  Trezy — this project began as a fork of that macOS controller and was
+  reworked into a per-app mixer.
 - Hardware and original concept: [PCPanel](https://www.getpcpanel.com/)
 - UI design inspiration: [FineTune](https://github.com/ronitsingh10/FineTune)
 - Lighting/HID protocol reference: the community
@@ -224,4 +227,6 @@ for reference only.
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE). This project is a derivative of the
+MIT-licensed [trezy/pcpanel](https://github.com/trezy/pcpanel) and preserves
+its original copyright notice alongside changes made here.
