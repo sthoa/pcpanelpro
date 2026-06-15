@@ -1,0 +1,46 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#3A3F4B"/>
+      <stop offset="0.55" stop-color="#23272F"/>
+      <stop offset="1" stop-color="#14161B"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.10"/>
+      <stop offset="0.18" stop-color="#FFFFFF" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="thumb" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#DCE3EC"/>
+    </linearGradient>
+    <filter id="thumbShadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <!-- Squircle background -->
+  <rect x="0" y="0" width="1024" height="1024" rx="228" ry="228" fill="url(#bg)"/>
+  <rect x="0" y="0" width="1024" height="1024" rx="228" ry="228" fill="url(#sheen)"/>
+  <rect x="2" y="2" width="1020" height="1020" rx="227" ry="227" fill="none" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="2"/>
+
+  <!-- Four mixer faders. Tracks span y 252..772; thumbs at varied heights. -->
+  <!-- Empty (upper) track portion -->
+  <g fill="#FFFFFF" fill-opacity="0.18">
+    <rect x="302" y="252" width="36" height="520" rx="18"/>
+    <rect x="430" y="252" width="36" height="520" rx="18"/>
+    <rect x="558" y="252" width="36" height="520" rx="18"/>
+    <rect x="686" y="252" width="36" height="520" rx="18"/>
+  </g>
+  <!-- Filled (lower) track portion, one RGB-lighting color per fader -->
+  <rect x="302" y="372" width="36" height="400" rx="18" fill="#FF453A"/>
+  <rect x="430" y="560" width="36" height="212" rx="18" fill="#30D158"/>
+  <rect x="558" y="452" width="36" height="320" rx="18" fill="#0A84FF"/>
+  <rect x="686" y="620" width="36" height="152" rx="18" fill="#BF5AF2"/>
+  <!-- Thumbs -->
+  <g filter="url(#thumbShadow)">
+    <circle cx="320" cy="372" r="60" fill="url(#thumb)"/>
+    <circle cx="448" cy="560" r="60" fill="url(#thumb)"/>
+    <circle cx="576" cy="452" r="60" fill="url(#thumb)"/>
+    <circle cx="704" cy="620" r="60" fill="url(#thumb)"/>
+  </g>
+</svg>
